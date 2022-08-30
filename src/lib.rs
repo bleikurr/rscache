@@ -1,19 +1,18 @@
 use std::sync::RwLock;
 use std::sync::Arc;
+use std::time::Duration;
 use std::time::Instant;
 
-struct CacheData<T, S, F>
-    where F: Fn(Option<&mut S>) -> T 
+struct CacheData<T, S>
 {
     data: Arc<T>,
     ttl: u128,
     state: Option<S>,
     age: std::time::Instant,
-    refresher: F
+    refresher: Box<dyn Fn(Option<&mut S>) -> T + Send + Sync>
 }
 
-impl<T, S, F> CacheData<T, S, F>
-    where F: Fn(Option<&mut S>) -> T
+impl<T, S> CacheData<T, S>
 {
     fn get_ref(&self) -> Result<Arc<T>, ()> {
         if self.age.elapsed().as_millis() > self.ttl {
@@ -42,18 +41,16 @@ impl<T, S, F> CacheData<T, S, F>
     }
 }
 
-pub struct Cache<T, S, F>
-    where F: Fn(Option<&mut S>) -> T
+pub struct Cache<T, S>
 {
-    data: RwLock<CacheData<T, S, F>>
+    data: RwLock<CacheData<T, S>>
 }
 
-type ACache<T, S, F> = Arc<Cache<T, S, F>>;
+pub type ACache<T, S> = Arc<Cache<T, S>>;
 
-impl<T, S, F> Cache<T, S, F>
-    where F: Fn(Option<&mut S>) -> T
+impl<T, S> Cache<T, S>
 {
-    pub fn new(mut state: Option<S>, ttl: u128, refresher: F) -> ACache<T, S, F> {
+    pub fn new(mut state: Option<S>, ttl: u128, refresher: Box<dyn Fn(Option<&mut S>) -> T + Send + Sync>) -> ACache<T, S> {
         let data = match state.as_mut() {
             Some(state) => refresher(Some(state)),
             None => refresher(None)
@@ -74,6 +71,7 @@ impl<T, S, F> Cache<T, S, F>
 
     pub fn get_data(&self) -> Arc<T> {
         {
+            std::thread::sleep(Duration::from_secs(1));
             let data = self.data.read().unwrap();
             if let Ok(data) = data.get_ref() {
                 return data;
@@ -84,7 +82,7 @@ impl<T, S, F> Cache<T, S, F>
         data.refresh()
     }
 
-    pub fn clone(cache: &ACache<T, S, F>) -> ACache<T, S, F> {
+    pub fn clone(cache: &ACache<T, S>) -> ACache<T, S> {
         Arc::clone(cache)
     }
 }
@@ -104,11 +102,11 @@ mod tests {
         let s = State { i: 0 }; 
 
 
-        let cache: ACache<u32, State, _> = Cache::new(Some(s), 50, |s| {
+        let cache: ACache<u32, State> = Cache::new(Some(s), 50, Box::new(|s| {
             let s = s.unwrap();
             s.i += 1;
             s.i
-        });
+        }));
         
         let cache1 = Cache::clone(&cache);
         let t1 = thread::spawn(move || {

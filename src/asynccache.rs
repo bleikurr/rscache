@@ -2,12 +2,31 @@ use tokio::sync::RwLock;
 use std::sync::Arc;
 use std::time::{Instant, Duration};
 
+/// Result returned when fetching the cached data. Error returned is the error
+/// returned from the "refresher function" supplied by the user.
 pub type AsyncCacheResult<T> = Result<Arc<T>, Box<dyn std::error::Error + Send + Sync>>;
+
+/// The type of result that is returned from the refresher function.
 pub type AsyncRefreshResult<T> = Result<T, Box<dyn std::error::Error + Send + Sync>>;
 
-/// Implementation of an inner struct for AsyncCache. Encapsulated.
-/// 
-/// T: Type of data being cached.
+
+// Trait used by encapsulated Cache structs.
+trait DataCache {
+    type Data;
+
+    // Returns the data from the cache. Error if data is old. Error handled by cache.
+    // If function returns Err it means the data is old.
+    fn get_reference(&self) -> Result<Arc<Self::Data>, ()>;
+
+    // Function that refreshes the data in the cache when old.
+    fn refresh(&mut self) -> AsyncCacheResult<Self::Data>;
+ }
+
+// Implementation of DataCache encapsulated by AsyncCache.
+// Used when data can be "statically" refreshed from a source.
+// (Explained better in AsyncDataCacheWithState
+// 
+// T: Type of data being cached.
 struct AsyncDataCache<T>
 {
     data: Option<Arc<T>>,
@@ -16,10 +35,15 @@ struct AsyncDataCache<T>
     refresher: Box<dyn Fn() -> AsyncRefreshResult<T> + Send + Sync>
 }
 
-/// Implementation of inner struct of AsyncCache. Encapsulated.
-/// 
-/// T: Type of data being cached.
-/// S: State used by 'refresher'.
+// Implementation of DataCache encapsulated in AsyncCache
+// Takes a state that is used by the refresher function to dynamically
+// update the data. F.x. if state is Arc<Mutex<S>> the state could be altered
+// outside the cache in a safe way in async context (with the assumption 
+// that the refresher function is done right). Thus affecting the data
+// cached in a dynamic way.
+// 
+// T: Type of data being cached.
+// S: State used by 'refresher'.
 struct AsyncDataCacheWithState<T, S>
 {
     data: Option<Arc<T>>,
@@ -30,16 +54,6 @@ struct AsyncDataCacheWithState<T, S>
 }
 
 
-/// Trait used by encapsulated structs
-trait DataCache {
-    type Data;
-    /// Returns the data from the cache. Error if data is old. Error handled by cache.
-    fn get_reference(&self) -> Result<Arc<Self::Data>, ()>;// Err means data is old
-
-    /// Returns cache data. Returns the error from the "refresher" function
-    fn refresh(&mut self) -> AsyncCacheResult<Self::Data>;
-    
- }
 
 impl<T, S> DataCache for AsyncDataCacheWithState<T, S>
 {
@@ -90,17 +104,25 @@ impl<T> DataCache for AsyncDataCache<T>
 }
 
 /// T: Type of data being cached.
-/// S: State used by 'refresher' function if needed. Can be () if not needed.
+/// Can be used with a State (see fn new_with_state)
 /// 
-/// Best used with Arc
+/// Should be used with Arc to be shared in a multithreaded context.
 /// ```
 /// use std::sync::Arc;
-/// use rscache::AsyncCache;
+/// use rusticache::AsyncCache;
 /// use std::time::Duration;
 ///
-/// let cache = Arc::new(AsyncCache::new(Duration::from_secs(10), Box::new(|| Ok(String::from("This is Sparta!")))));
-/// ```
+/// async fn do_stuff() {
+///     let cache = Arc::new(AsyncCache::new(
+///         Duration::from_secs(10),
+///         Box::new(|| Ok(String::from("This is Sparta!")))
+///     ));
 ///
+///     let data = cache.get_data().await;
+///     assert_eq!(*data.unwrap(), String::from("This is Sparta!"));
+/// }
+/// do_stuff();
+/// ```
 pub struct AsyncCache<'a, T>
 where T: 'a
 {
@@ -110,6 +132,11 @@ where T: 'a
 impl<'a, T> AsyncCache<'a, T>
 where T: Send + Sync + 'a
 {
+    /// Creates a new AsyncCache instance
+    ///
+    /// * `ttl` - Duration it takes for the date to get stale 
+    /// * `refresher` - Closure that generates the data stored by the cache
+    /// it is called internally by the cache when data grows stale.
     pub fn new(ttl: Duration, refresher: Box<dyn Fn() -> AsyncRefreshResult<T> + Send + Sync>)
         -> Self 
        {
@@ -124,6 +151,36 @@ where T: Send + Sync + 'a
         }
     }
 
+    /// Creates a new AsyncCache instance with state
+    ///
+    /// * `state` - State used by internally by the cache when generating the data.
+    /// It is passed to the refresher function when data is refreshed.
+    /// * `ttl` - Duration it takes for the date to get stale 
+    /// * `refresher` - Closure that generates the data stored by the cache
+    /// it is called internally by the cache when data grows stale.
+    ///
+    /// ```
+    /// use rusticache::AsyncCache;
+    /// use std::time::Duration;
+    ///
+    /// async fn do_stuff() {
+    ///     struct State {
+    ///         i: u32
+    ///     }
+    ///     let s = State { i: 0 }; 
+    ///
+    ///     let cache = AsyncCache::new_with_state(s, Duration::from_millis(50), Box::new(|s| {
+    ///         s.i = s.i + 1;
+    ///         Ok(s.i)
+    ///     }));
+    ///
+    ///     let data = cache.get_data().await;
+    ///     assert_eq!(*data.unwrap(), 1);
+    ///
+    /// }
+    ///
+    /// do_stuff();
+    /// ```
     pub fn new_with_state<S>(
         state: S,
         ttl: Duration,
@@ -143,6 +200,7 @@ where T: Send + Sync + 'a
         }
     }
 
+    /// Returns readable data from the cache. Lazily refreshes data when stale.
     pub async fn get_data(&self) -> AsyncCacheResult<T> {
         {
             let data = self.data.read().await;

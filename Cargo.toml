@@ -1,7 +1,12 @@
 [package]
-name = "rscache"
-version = "0.1.0"
+name = "rusticache"
+description = "Simple caching for rust without external requirements."
+version = "0.0.1"
 edition = "2021"
+license = "MIT OR Apache-2.0"
+homepage = "https://github.com/bleikurr/rusticache"
+repository = "https://github.com/bleikurr/rusticache"
+readme = "README.md"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 

@@ -7,6 +7,8 @@ license = "MIT OR Apache-2.0"
 homepage = "https://github.com/bleikurr/rusticache"
 repository = "https://github.com/bleikurr/rusticache"
 readme = "README.md"
+keywords = ["cache", "caching", "asynchronous"]
+categories = ["caching", "asynchronous"]
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 

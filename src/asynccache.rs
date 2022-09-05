@@ -94,7 +94,6 @@ impl<T> DataCache for AsyncDataCache<T>
             return Ok(Arc::clone(self.data.as_ref().unwrap()));
         }
        
-        eprintln!("Refreshing data!");
         let data = (self.refresher)()?;
         self.data = Some(Arc::new(data));
         self.age = Instant::now();

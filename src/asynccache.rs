@@ -71,10 +71,15 @@ impl<T, S> DataCache for AsyncDataCacheWithState<T, S>
             return Ok(Arc::clone(self.data.as_ref().unwrap()));
         }
 
-        let data = (self.refresher)(&mut self.state)?;
-        self.data = Some(Arc::new(data));
+        let data = (self.refresher)(&mut self.state);
+        if data.is_ok() {
+            self.data = Some(Arc::new(data.unwrap()));
+            self.age = Instant::now();
+            return Ok(Arc::clone(self.data.as_ref().unwrap()))
+        }
+
         self.age = Instant::now();
-        Ok(Arc::clone(self.data.as_ref().unwrap()))
+        Err(data.err().unwrap())
     }
 }
 
@@ -94,10 +99,15 @@ impl<T> DataCache for AsyncDataCache<T>
             return Ok(Arc::clone(self.data.as_ref().unwrap()));
         }
        
-        let data = (self.refresher)()?;
-        self.data = Some(Arc::new(data));
+        let data = (self.refresher)();
+        if data.is_ok() {
+            self.data = Some(Arc::new(data.unwrap()));
+            self.age = Instant::now();
+            return Ok(Arc::clone(self.data.as_ref().unwrap()))
+        }
+
         self.age = Instant::now();
-        Ok(Arc::clone(self.data.as_ref().unwrap()))
+        Err(data.err().unwrap())
     }
 
 }
@@ -200,6 +210,7 @@ where T: Send + Sync + 'a
     }
 
     /// Returns readable data from the cache. Lazily refreshes data when stale.
+    /// If a failure occurs it keeps old data and returns and error.
     pub async fn get_data(&self) -> AsyncCacheResult<T> {
         {
             let data = self.data.read().await;
